@@ -1,0 +1,1037 @@
+--Side notes: 
+--[=[
+The things you see inside the script will assign themselves automatically! Dont move them manually!
+
+You dont acturally need to use enviroments! Just the option for extra levels of dynamic.
+
+If you DO want to use enviroments just add parts into it following this formula:
+Invisible
+CanCollide = false
+CanQuery = true
+CanTouch = false
+Anchored = true
+Has one of these names based on your enviroment
+Hot, Cold, Humid, Dry, Normal
+
+Also most of the settings will be done automatically for the enviroment blocks but you MUST do the name otherwise it will default to Normal.
+
+If you want to change the weather rarities you can find them in Main > RaritySystem > WeatherRarities.
+
+--]=]
+--Settings--
+local CloudHight = 450--The hight clouds will spawn.
+local MaxGlobalWind = 15--The max base wind speed.
+local WindChangeFrequency = 30--How long in seconds base wind takes to change.
+local WindChangeCompleteTime = 10--How long in seconds base wind takes to complete after the start of change. Reccomended to be below WindChangeFrequency.
+local CloudSpawnMaxDistance = 300--How far clouds can spawn from their spawn target.
+local CloudChangeCompleteTime = 10--How long in seconds clouds take to change states.
+local CloudGrowthMulti = 0.5--Determines the rate the clouds grow and shrink in size.
+local CloudSpawnFrequency = 30--Roughly how long between cloud spawns. This fluxuates a bit.
+local AverageLightningFrequency = 15--Roughly how long between lightning strikes. This fluxuates a bit.
+local SpawnTarget = "Players"--Controls how clouds will spawn.
+--Spawn targets
+--[=[
+Players: Will pick a random player and spawn a cloud nearby and the cloud will follow the wind from there. (Recommended)
+Characters: Will pick a random live character in the world and spawn a cloud nearby and the cloud will follow the wind from there.
+WorldRoot: Will spawn the clouds around world root.
+--]=]
+
+local WindTarget = "Workspace Characters"--Controls how clouds will spawn.
+--Wind targets
+--[=[
+All Characters: This applies wind physics to ALL LIVING CHARACTERS in the game. [LAGGY]
+Workspace Characters: Will apply wind physics to characters parented directly to Workspace. (Recommended)
+Players: Wind physics will only apply on Players.
+--]=]
+
+--Settings--
+
+--Services--
+local tweenService = game:GetService("TweenService")
+local runService = game:GetService("RunService")
+local RaritySytem = require(script.RaritySystem)
+local WeatherRarities = require(script.RaritySystem.WeatherRarities)
+--Services--
+
+--Constants--
+local Weathers = 
+	{
+		"Cloud",
+		"Rain",
+		"Heavy Rain",
+		"Storm",
+		"Storm Wind",
+		"Storm Hail",
+		"T1",--Tornado: 100, Cyclone: 85
+		"T2",--Tornado: 125, Cyclone: 105
+		"T3",--Tornado: 155, Cyclone: 125
+		"T4",--Tornado: 175, Cyclone: 145
+		"T5",--Tornado: 215, Cyclone: 165
+		"T6",--This doesent acturally exist. Its just an upper limit to stop infinitely growing storms.
+	}
+--Constants--
+
+--Variables--
+local WindChangeDelta = WindChangeFrequency
+local CloudSpawnDelta = CloudSpawnFrequency
+local ThunderSounds = {"rbxassetid://5246104843",
+	"rbxassetid://12222030",
+	"rbxassetid://5721273154",
+	"rbxassetid://6734393210",
+	"rbxassetid://6994934244",
+	"rbxassetid://6767192500",
+	"rbxassetid://5246103002",
+	"rbxassetid://4961240438",
+	"rbxassetid://1079408535",
+	"rbxassetid://4961088919",
+	"rbxassetid://4961025694",
+	"rbxassetid://4961240438"
+	
+}
+--Variables--
+
+--Functions--
+
+function Bolt(startpos:Vector3,targetpos:Vector3,boltcolour:Color3,Size:number,Lifetime:number)
+
+	local function raycast(spos,vec,currentdist)
+		local hit2,pos2=game.Workspace:FindPartOnRay(Ray.new(spos+(vec*.01),vec*currentdist),script.Parent)
+		if hit2~=nil and pos2 then
+			if hit2.Transparency>=.5 or hit2.Name=="Handle" then
+				local currentdist=currentdist-(pos2-spos).magnitude
+				return raycast(pos2,vec,currentdist)
+			end
+		end
+		return hit2,pos2
+	end
+
+	local function Fork(forkstartpos:Vector3,forktargetpos:Vector3,forkboltcolour:Color3,forkSize:number,forkLifetime:number)
+
+		local segmentlength=forkSize or 20
+		local varience=10--1.5
+		local timetofade=forkLifetime
+		local Range = 2000
+
+		if forktargetpos then
+			local m=Instance.new("Model")
+			m.Name="Lightning"
+			local lastpos=forkstartpos
+			local totalsegments=math.ceil(Range/segmentlength)
+			local direction=(forktargetpos-forkstartpos).unit
+			local struck=false
+			for i=1,totalsegments do
+				if not struck then
+					local entropy=Vector3.new(varience*((math.random()*2)-1),varience*((math.random()*2)-1),varience*((math.random()*2)-1))
+					local newpos=forkstartpos+(direction*(Range*(i/totalsegments)))+entropy
+					local hit,endpos=raycast(lastpos,(newpos-lastpos).unit,(lastpos-newpos).magnitude)
+					local l=Instance.new("Part")
+					l.CanCollide=false
+					l.Anchored=true
+					l.Color=forkboltcolour or Color3.new(0.333333, 1, 1)
+					l.Material = Enum.Material.Neon
+					l.formFactor="Custom"
+					l.Size=Vector3.new(.2,.2,.2)
+					l.CFrame=CFrame.new(lastpos,endpos)*CFrame.Angles(math.pi/2,0,0)*CFrame.new(0,-(lastpos-endpos).magnitude/2,0)
+					local mesh=Instance.new("CylinderMesh")
+					mesh.Scale=Vector3.new(4,(lastpos-endpos).magnitude,4)*5
+					mesh.Parent=l
+					l.Parent=m
+					local ForkEndChance = math.random(1,5)
+					if hit and hit.Parent~=nil or ForkEndChance == 1 then
+						l.BrickColor = BrickColor.new("Institutional white")
+						struck=true
+					end
+
+					lastpos=endpos
+				end
+			end
+
+			spawn(function()
+				m.Parent=script.Parent
+				
+				for _, Zap:Part in pairs(m:GetChildren()) do
+					if Zap then
+						local goal = {}
+						goal.Transparency = 1
+						local tweenInfo = TweenInfo.new(timetofade)
+
+						local tween = tweenService:Create(Zap,tweenInfo,goal)
+						tween:Play()
+					end
+				end
+				
+				wait(timetofade)
+				m:Destroy()
+			end)
+			return lastpos
+
+		end
+	end
+
+	local segmentlength=Size or 20
+	local varience=10--1.5
+	local timetofade=Lifetime
+	local Range = 2000
+
+	if targetpos then
+		local m=Instance.new("Model")
+		m.Name="Lightning"
+		local lastpos=startpos
+		local totalsegments=math.ceil(Range/segmentlength)
+		local direction=(targetpos-startpos).unit
+		local struck=false
+		for i=1,totalsegments do
+			if not struck then
+				local entropy=Vector3.new(varience*((math.random()*2)-1),varience*((math.random()*2)-1),varience*((math.random()*2)-1))
+				local newpos=startpos+(direction*(Range*(i/totalsegments)))+entropy
+				local hit,endpos=raycast(lastpos,(newpos-lastpos).unit,(lastpos-newpos).magnitude)
+				local l=Instance.new("Part")
+				l.CanCollide=false
+				l.Anchored=true
+				l.Color=boltcolour or Color3.new(0.333333, 1, 1)
+				l.Material = Enum.Material.Neon
+				l.formFactor="Custom"
+				l.Size=Vector3.new(.2,.2,.2)
+				l.CFrame=CFrame.new(lastpos,endpos)*CFrame.Angles(math.pi/2,0,0)*CFrame.new(0,-(lastpos-endpos).magnitude/2,0)
+				local mesh=Instance.new("CylinderMesh")
+				mesh.Scale=Vector3.new(4,(lastpos-endpos).magnitude,4)*5
+				mesh.Parent=l
+				l.Parent=m
+				if hit and hit.Parent~=nil then
+					l.BrickColor = BrickColor.new("Institutional white")
+					struck=true
+				else
+					local ForkChance = math.random(1,5)
+					if ForkChance == 1 then
+						spawn(function()
+							Fork(endpos,endpos + Vector3.new(math.random(-100,100),math.random(-100,0),math.random(-100,100)),boltcolour,Size,Lifetime)
+						end)
+					end
+				end
+
+				lastpos=endpos
+			end
+		end
+
+		spawn(function()
+			m.Parent=script.Parent
+			
+			for _, Zap:Part in pairs(m:GetChildren()) do
+				if Zap then
+					local goal = {}
+					goal.Transparency = 1
+					local tweenInfo = TweenInfo.new(timetofade)
+
+					local tween = tweenService:Create(Zap,tweenInfo,goal)
+					tween:Play()
+				end
+			end
+			
+			wait(timetofade)
+			m:Destroy()
+		end)
+		return lastpos
+
+	end
+end
+
+function Lightning(Position)	
+	spawn(function()
+		
+		local ZapChance = math.random(1,2)
+		if ZapChance == 1 then
+			local SoundBlock = Instance.new("Part")
+			SoundBlock.Anchored = true
+			SoundBlock.CanCollide = false
+			SoundBlock.CanTouch = false
+			SoundBlock.CanQuery = false
+			SoundBlock.Transparency = 1
+			SoundBlock.Position = Position
+			SoundBlock.Parent = script.Parent
+
+			local Thunder = Instance.new("Sound")
+			Thunder.SoundId = ThunderSounds[math.random(1,#ThunderSounds)]
+			Thunder.Parent = SoundBlock
+			Thunder.Volume = 5
+			Thunder.RollOffMinDistance = 1000
+			Thunder.PlayOnRemove = true
+			Thunder:Destroy()
+
+			local Impact = Instance.new("Sound")
+			Impact.SoundId = "http://www.roblox.com/asset/?id=412831137"
+			Impact.Parent = SoundBlock
+			Impact.Volume = 5
+			Impact.PlayOnRemove = true
+			Impact:Destroy()
+
+			spawn(function()
+				local Bright = Instance.new("ColorCorrectionEffect")
+				Bright.Brightness = 0
+				Bright.Contrast = 0
+				Bright.Saturation = 0
+				Bright.TintColor = Color3.new(1, 1, 1)
+				Bright.Parent = game.Lighting
+				
+				local goal = {}
+				goal.Brightness = 0.6
+				local tweenInfo = TweenInfo.new(0.25)
+
+				local tween = tweenService:Create(Bright,tweenInfo,goal)
+				tween:Play()
+				wait(0.25)
+				
+				local goal = {}
+				goal.Brightness = 0
+				local tweenInfo = TweenInfo.new(0.75)
+
+				local tween = tweenService:Create(Bright,tweenInfo,goal)
+				tween:Play()
+				
+				wait(0.75)
+				Bright:Destroy()
+			end)
+			
+			local lightblock = script.CloudFlash:Clone()
+			lightblock.Position = (Position + Vector3.new(0,CloudHight,0))
+			lightblock.Parent = script.Parent
+			for i = 1,math.random(1,5) do
+				lightblock.Top.Enabled = true
+				lightblock.Bottom.Enabled = true
+				lightblock.BillboardGui.Enabled = true
+				wait(math.random(0.1,0.5))
+				lightblock.Top.Enabled = false
+				lightblock.Bottom.Enabled = false
+				lightblock.BillboardGui.Enabled = false
+				wait(math.random(0.1,0.5))
+			end
+			lightblock:Destroy()
+
+			local radendpos = Position + Vector3.new(math.random(-300,300),math.random(-CloudHight,CloudHight),math.random(-300,300))
+
+			local zaps = math.random(3,5)
+			for i = 1,zaps do
+				Bolt(Position + Vector3.new(0,CloudHight,0),radendpos,Color3.new(1, 1, 1),50,0.3)
+				wait(0.3)
+			end
+			SoundBlock:Destroy()
+		else
+			local lightblock = script.CloudFlash:Clone()
+			lightblock.Position = (Position + Vector3.new(0,CloudHight,0))
+			lightblock.Parent = script.Parent
+			for i = 1,math.random(1,5) do
+				lightblock.Top.Enabled = true
+				lightblock.Bottom.Enabled = true
+				lightblock.BillboardGui.Enabled = true
+				wait(math.random(0.1,0.5))
+				lightblock.Top.Enabled = false
+				lightblock.Bottom.Enabled = false
+				lightblock.BillboardGui.Enabled = false
+				wait(math.random(0.1,0.5))
+			end
+			lightblock:Destroy()
+		end
+
+	end)
+end
+
+function UpdateCharWindEffect(Humanoid:Humanoid)
+
+	local function GetWeatherTier(Cloud)
+		local Tier = 0
+		for index = 1,#Weathers do
+			if Cloud.CurrentWeatherType.Value == Weathers[index] then
+				Tier = index
+			end
+		end
+		return Tier
+	end
+
+	local function WindVertical(Wind:number?)
+		Wind = Wind - 50
+		if Wind < 0 then
+			Wind = 0
+		end
+		return Wind
+	end
+
+	local function WindHorizonal(Wind:number?)
+		Wind = Wind - 45
+		if Wind < 0 then
+			Wind = 0
+		end
+		return Wind
+	end
+
+	local Root = Humanoid.RootPart
+
+	if Root ~= nil then
+
+		local WindVelocity = script.Parent.WorldWind.Value
+
+		local raycastParams = RaycastParams.new()
+		raycastParams.FilterDescendantsInstances = {game.Workspace.DynamicWeather.Clouds}
+		raycastParams.FilterType = Enum.RaycastFilterType.Include
+
+		local RayEndPos = Vector3.new(0, 6000, 0)
+		local RaycastResult = workspace:Raycast(Root.Position, RayEndPos, raycastParams)
+
+		local Cloud = nil
+		local ExtraWind = Vector3.new(0, 0, 0)
+		local ExtraSpeed = 0
+
+		if RaycastResult then
+			Cloud = RaycastResult.Instance
+		end
+
+		if Cloud then
+			local CloudPos = Vector3.new(Cloud.Position.X, Root.Position.Y, Cloud.Position.Z)
+
+			local DistanceToCloud = (Root.Position - CloudPos).Magnitude
+			local CloudSize = Cloud.Size.Magnitude * 0.5
+
+			local TornadoWind = 0
+
+			local startDistance = 0.9 -- The point where wind starts to take effect (the outer reaches of the storm cloud).
+			local midDistance = 0.1 -- The point where wind reaches max effect (close to the middle of the storm, just outside the "dead zone").
+			local endDistance = 0 -- The point where wind reaches zero effect again at the very middle of the storm's "dead zone". Alternatively this is the middle of a tornado.
+
+			local MaxWindSpeed = Cloud.WindSpeed.Value --Wind speed at the mid distance.
+
+			if DistanceToCloud < CloudSize*startDistance and DistanceToCloud > CloudSize*midDistance then
+				-- Linearly interpolate the wind strength between startDistance and midDistance.
+				ExtraSpeed = (1 - ((DistanceToCloud - CloudSize*midDistance) / ((startDistance - midDistance) * CloudSize))) * MaxWindSpeed
+			elseif DistanceToCloud < CloudSize*midDistance and DistanceToCloud > CloudSize*endDistance then
+				-- Linearly interpolate the wind strength between midDistance and endDistance.
+				ExtraSpeed = (1 - ((DistanceToCloud - CloudSize*midDistance) / ((endDistance - midDistance) * CloudSize))) * MaxWindSpeed
+			else
+				ExtraSpeed = 0
+			end
+
+			if Cloud.DisasterType.Value == "Tornado" and GetWeatherTier(Cloud) >= 7 then
+
+				local tornadoEdgeDistance = 1 * Cloud.TornadoStuff.Tornado.Width1/CloudSize
+				local tornadoInsideDistance = 1 * Cloud.TornadoStuff.Tornado.Width0/CloudSize
+
+				if DistanceToCloud < CloudSize*tornadoEdgeDistance and DistanceToCloud > CloudSize*tornadoInsideDistance then
+					-- Linearly interpolate the wind strength between tornadoEdgeDistance and tornadoInsideDistance.
+					TornadoWind = (1 - ((DistanceToCloud - CloudSize*tornadoInsideDistance) / ((tornadoEdgeDistance - tornadoInsideDistance) * CloudSize))) * Cloud.TornadoSpeed.Value
+				elseif DistanceToCloud <= CloudSize*tornadoInsideDistance then
+					TornadoWind = Cloud.TornadoSpeed.Value
+				else
+					TornadoWind = 0
+				end
+			end
+
+			ExtraSpeed = ExtraSpeed + TornadoWind
+
+			local Reference = CFrame.lookAt(Root.Position, CloudPos) * CFrame.Angles(0, math.rad(140), 0)
+			local WindDirection = Reference * CFrame.new(0, -WindVertical(TornadoWind*0.5), -ExtraSpeed)
+
+			ExtraWind = Root.Position - WindDirection.Position
+			WindVelocity = WindVelocity + ExtraWind
+		end
+
+
+		local WindAttach:Attachment = Root:FindFirstChild("WindAttach")
+		local WindEffect:LinearVelocity = Root:FindFirstChild("WindEffect")
+
+		if WindAttach ~= nil then
+		else
+			WindAttach = Instance.new("Attachment")
+			WindAttach.Name = "WindAttach"
+			WindAttach.Parent = Root
+		end
+		if WindEffect ~= nil then
+			local Forcefield = Root.Parent:FindFirstChildOfClass("ForceField")
+			if Forcefield ~= nil then
+				WindEffect.MaxAxesForce = Vector3.new(0,0,0)
+				WindEffect.VectorVelocity = Vector3.new(0,0,0)
+			else
+				WindEffect.MaxAxesForce = Vector3.new(WindHorizonal(WindVelocity.Magnitude) * 100,WindVertical(WindVelocity.Magnitude) * 100,WindHorizonal(WindVelocity.Magnitude) * 100)
+				WindEffect.VectorVelocity = WindVelocity
+			end
+		else
+			WindEffect = Instance.new("LinearVelocity")
+			WindEffect.Name = "WindEffect"
+			WindEffect.Attachment0 = WindAttach
+			WindEffect.ForceLimitMode = Enum.ForceLimitMode.PerAxis
+			WindEffect.MaxAxesForce = Vector3.new(WindHorizonal(WindVelocity.Magnitude) * 100,WindVertical(WindVelocity.Magnitude) * 100,WindHorizonal(WindVelocity.Magnitude) * 100)
+			WindEffect.VectorVelocity = WindVelocity
+			WindEffect.Parent = Root
+		end
+	end
+
+end
+
+function UpdateAllCharWind(Delta)
+	if WindTarget == "All Characters" then
+		for _, Hum in pairs(workspace:GetDescendants()) do
+			if Hum:IsA("Humanoid") then
+				UpdateCharWindEffect(Hum)
+			end
+		end
+	elseif WindTarget == "Workspace Characters" then
+		for _, Char in pairs(workspace:GetChildren()) do
+			local Hum:Humanoid = Char:FindFirstChildOfClass("Humanoid")
+			if Hum and Hum:IsA("Humanoid") then
+				UpdateCharWindEffect(Hum)
+			end
+		end
+	elseif WindTarget == "Players" then
+		for _, Plr:Player in pairs(game.Players:GetChildren()) do
+			local Char:Model = Plr.Character
+			if Char then
+				local Hum = Char:FindFirstChildOfClass("Humanoid")
+				if Hum and Hum:IsA("Humanoid") then
+					UpdateCharWindEffect(Hum)
+				end
+			end
+		end
+	end
+end
+
+function SpawnNewCloud()
+	local function GetTargetPos()
+		if SpawnTarget == "WorldRoot" then
+			return Vector3.new(math.random(-CloudSpawnMaxDistance,CloudSpawnMaxDistance),CloudHight,math.random(-CloudSpawnMaxDistance,CloudSpawnMaxDistance))
+		elseif SpawnTarget == "Players" then
+			local plrs = {}
+			for _, Player in pairs(game.Players:GetChildren()) do
+				table.insert(plrs,Player)
+			end
+
+			local result = nil
+
+			if #plrs > 0 then
+				local Chosen:Player = plrs[math.random(1,#plrs)]
+				if Chosen ~= nil then
+					local Hum = Chosen.Character:FindFirstChildOfClass("Humanoid")
+					if Hum then
+						if Hum.RootPart then
+							result = Hum.RootPart.Position + Vector3.new(math.random(-CloudSpawnMaxDistance,CloudSpawnMaxDistance),CloudHight,math.random(-CloudSpawnMaxDistance,CloudSpawnMaxDistance))
+						end
+					end
+				end	
+			end
+
+			if result ~= nil then
+				return result
+			else
+				--WorldRoot default.
+				warn("Defaulted to world root because there is no existing players.")
+				return Vector3.new(math.random(-CloudSpawnMaxDistance,CloudSpawnMaxDistance),CloudHight,math.random(-CloudSpawnMaxDistance,CloudSpawnMaxDistance))
+			end
+		else
+			--WorldRoot default.
+			return Vector3.new(math.random(-CloudSpawnMaxDistance,CloudSpawnMaxDistance),CloudHight,math.random(-CloudSpawnMaxDistance,CloudSpawnMaxDistance))
+		end
+	end
+
+	local Cloud = script.Cloud:Clone()
+	Cloud.Growing.Value = true
+	Cloud.CloudPower.Value = 1
+	Cloud.Size = Vector3.new(0,0,0)
+	Cloud.Mesh.Scale = Vector3.new(0,0,0)
+	Cloud.Position = GetTargetPos()
+	Cloud.Transparency = 0
+	Cloud.WeatherTypeGoal.Value = RaritySytem.GetItem(WeatherRarities.Weather)
+	Cloud.NextLightningBolt.Value = math.random(AverageLightningFrequency*0.5,AverageLightningFrequency*2)
+	Cloud.Parent = script.Parent.Clouds
+end
+function CheckCloudState(Cloud)
+	local CloudPower:NumberValue = Cloud:FindFirstChild("CloudPower")
+	local WindSpeed:NumberValue = Cloud:FindFirstChild("WindSpeed")
+	local TornadoSpeed:NumberValue = Cloud:FindFirstChild("TornadoSpeed")
+	local DisasterType:StringValue = Cloud:FindFirstChild("DisasterType")
+	local Growing:BoolValue = Cloud:FindFirstChild("Growing")
+	local WeatherTypeGoal:StringValue = Cloud:FindFirstChild("WeatherTypeGoal")
+	local CurrentWeatherType:StringValue = Cloud:FindFirstChild("CurrentWeatherType")
+
+	local function ChangeCloud(HorizonalHight:number?,VerticalHight:number?,DesiredWindSpeed:number?,DesiredTornadoSpeed:number?,DesiredTornadoSize:number?,Dissipating:boolean)
+		----------
+		local goal = {}
+		goal.Size = Vector3.new(HorizonalHight,1,HorizonalHight)
+		local tweenInfo = TweenInfo.new(CloudChangeCompleteTime)
+
+		local tween = tweenService:Create(Cloud,tweenInfo,goal)
+		tween:Play()
+		----------
+		local goal = {}
+		goal.Scale = Vector3.new(HorizonalHight*2,VerticalHight,HorizonalHight*2)
+		goal.Offset = Vector3.new(0,VerticalHight*30/100,0)
+		local tweenInfo = TweenInfo.new(CloudChangeCompleteTime)
+
+		local tween = tweenService:Create(Cloud.Mesh,tweenInfo,goal)
+		tween:Play()
+		----------
+		local goal = {}
+		goal.Value = DesiredWindSpeed
+		local tweenInfo = TweenInfo.new(CloudChangeCompleteTime)
+
+		local tween = tweenService:Create(WindSpeed,tweenInfo,goal)
+		tween:Play()
+		----------
+		local goal = {}
+		goal.Value = DesiredTornadoSpeed or 0
+		local tweenInfo = TweenInfo.new(CloudChangeCompleteTime)
+
+		local tween = tweenService:Create(TornadoSpeed,tweenInfo,goal)
+		tween:Play()
+
+		if DesiredTornadoSize and DesiredTornadoSize > 0 then
+			--Cloud.TornadoStuff.Tornado.Enabled = true
+			--Cloud.TornadoStuff.Debris.Enabled = true
+
+			----------
+			local goal = {}
+			goal.Width0 = DesiredTornadoSize or 0
+			goal.Width1 = DesiredTornadoSize*2 or 0
+			local tweenInfo = TweenInfo.new(CloudChangeCompleteTime)
+
+			local tween = tweenService:Create(Cloud.TornadoStuff.Tornado,tweenInfo,goal)
+			tween:Play()
+			----------
+			local goal = {}
+			goal.Width0 = DesiredTornadoSize + 10
+			goal.Width1 = DesiredTornadoSize*2 + 10
+			local tweenInfo = TweenInfo.new(CloudChangeCompleteTime)
+
+			local tween = tweenService:Create(Cloud.TornadoStuff.Debris,tweenInfo,goal)
+			tween:Play()
+			----------
+			local goal = {}
+			goal.Volume = 1
+			goal.RollOffMinDistance = DesiredTornadoSize + 10
+			local tweenInfo = TweenInfo.new(CloudChangeCompleteTime)
+
+			local tween = tweenService:Create(Cloud.TornadoBottom.Wind,tweenInfo,goal)
+			tween:Play()
+
+		else
+			Cloud.TornadoStuff.Tornado.Enabled = false
+			Cloud.TornadoStuff.Debris.Enabled = false
+
+			----------
+			local goal = {}
+			goal.Width0 = 0
+			goal.Width1 = 0
+			local tweenInfo = TweenInfo.new(CloudChangeCompleteTime)
+
+			local tween = tweenService:Create(Cloud.TornadoStuff.Tornado,tweenInfo,goal)
+			tween:Play()
+			----------
+			local goal = {}
+			goal.Width0 = 0
+			goal.Width1 = 0
+			local tweenInfo = TweenInfo.new(CloudChangeCompleteTime)
+
+			local tween = tweenService:Create(Cloud.TornadoStuff.Debris,tweenInfo,goal)
+			tween:Play()
+			----------
+			local goal = {}
+			goal.Volume = 0
+			goal.RollOffMinDistance = 0
+			local tweenInfo = TweenInfo.new(CloudChangeCompleteTime)
+
+			local tween = tweenService:Create(Cloud.TornadoBottom.Wind,tweenInfo,goal)
+			tween:Play()
+
+		end
+
+		local CurrentTier = nil
+		for Index = 1,#Weathers do
+			if CurrentWeatherType.Value == Weathers[Index] then
+				CurrentTier = Index
+			end
+		end
+
+		local GoalTier = nil
+		for Index = 1,#Weathers do
+			if WeatherTypeGoal.Value == Weathers[Index] then
+				GoalTier = Index
+			end
+		end
+
+		if CurrentTier ~= nil and GoalTier ~= nil and CurrentTier > GoalTier then
+			Growing.Value = false
+			print("Cloud tier ="..CurrentTier)
+			print("goal tier ="..GoalTier)
+			print("Death.")
+		elseif CurrentTier ~= nil and GoalTier ~= nil and CurrentTier <= GoalTier then
+			--Nothing.
+			print("Cloud tier ="..CurrentTier)
+			print("goal tier ="..GoalTier)
+			print("All good.")
+		else
+			Growing.Value = false--Broken.
+			print("Derp.")
+		end
+
+		if Dissipating == true then
+			game.Debris:AddItem(Cloud,CloudChangeCompleteTime)
+		end
+
+	end
+
+	if CurrentWeatherType.Value ~= "Dissipating" and CloudPower.Value <= 0 then
+		CurrentWeatherType.Value = "Dissipating"
+
+		ChangeCloud(0,0,0,0,0,true)
+
+	elseif CurrentWeatherType.Value ~= Weathers[1] and CloudPower.Value > 0 and CloudPower.Value <= 100 then--Cloud
+		CurrentWeatherType.Value = Weathers[1]--Cloud
+
+		ChangeCloud(100,10,0)
+
+	elseif CurrentWeatherType.Value ~= Weathers[2] and CloudPower.Value > 100 and CloudPower.Value <= 200 then--Rain
+		CurrentWeatherType.Value = Weathers[2]--Rain
+
+		ChangeCloud(500,20,5)
+
+	elseif CurrentWeatherType.Value ~= Weathers[3] and CloudPower.Value > 200 and CloudPower.Value <= 300 then--Heavy Rain
+		CurrentWeatherType.Value = Weathers[3]--Heavy Rain
+
+		ChangeCloud(700,50,10)
+
+	elseif CurrentWeatherType.Value ~= Weathers[4] and CloudPower.Value > 300 and CloudPower.Value <= 400 then--Storm
+		CurrentWeatherType.Value = Weathers[4]--Storm
+
+		ChangeCloud(1000,100,15)
+
+	elseif CurrentWeatherType.Value ~= Weathers[5] and CloudPower.Value > 400 and CloudPower.Value <= 500 then--Storm Wind
+		CurrentWeatherType.Value = Weathers[5]--Storm Wind
+
+		ChangeCloud(1200,200,40)
+
+	elseif CurrentWeatherType.Value ~= Weathers[6] and CloudPower.Value > 500 and CloudPower.Value <= 600 then--Storm Hail
+		CurrentWeatherType.Value = Weathers[6]--Storm Hail
+
+		ChangeCloud(1500,600,40)
+
+	elseif CurrentWeatherType.Value ~= Weathers[7] and DisasterType.Value == "Tornado" and CloudPower.Value > 600 and CloudPower.Value <= 700 then--T1
+		CurrentWeatherType.Value = Weathers[7]--T1
+
+		ChangeCloud(1600,1000,40,100,100)
+
+	elseif CurrentWeatherType.Value ~= Weathers[8] and DisasterType.Value == "Tornado" and CloudPower.Value > 700 and CloudPower.Value <= 800 then--T2
+		CurrentWeatherType.Value = Weathers[8]--T2
+
+		ChangeCloud(1700,1300,40,125,220)
+
+	elseif CurrentWeatherType.Value ~= Weathers[9] and DisasterType.Value == "Tornado" and CloudPower.Value > 800 and CloudPower.Value <= 900 then--T3
+		CurrentWeatherType.Value = Weathers[9]--T3
+
+		ChangeCloud(1800,1600,40,155,370)
+
+	elseif CurrentWeatherType.Value ~= Weathers[10] and DisasterType.Value == "Tornado" and CloudPower.Value > 900 and CloudPower.Value <= 1000 then--T4
+		CurrentWeatherType.Value = Weathers[10]--T4
+
+		ChangeCloud(1900,1900,40,175,560)
+
+	elseif CurrentWeatherType.Value ~= Weathers[11] and DisasterType.Value == "Tornado" and CloudPower.Value > 1000 and CloudPower.Value <= 1100 then--T5
+		CurrentWeatherType.Value = Weathers[11]--T5
+
+		ChangeCloud(2048,2048,40,215,560)
+	elseif CurrentWeatherType.Value ~= Weathers[12] and DisasterType.Value == "Tornado" and CloudPower.Value > 1100 then--T6
+		CurrentWeatherType.Value = Weathers[12]--T6
+
+		ChangeCloud(2048,2048,40,215,1120)
+	elseif CurrentWeatherType.Value ~= Weathers[7] and DisasterType.Value == "Cyclone" and CloudPower.Value > 600 and CloudPower.Value <= 700 then--C1
+		CurrentWeatherType.Value = Weathers[7]--C1
+
+		ChangeCloud(1600,1000,85)
+
+	elseif CurrentWeatherType.Value ~= Weathers[8] and DisasterType.Value == "Cyclone" and CloudPower.Value > 700 and CloudPower.Value <= 800 then--C2
+		CurrentWeatherType.Value = Weathers[8]--C2
+
+		ChangeCloud(1700,1300,105)
+
+	elseif CurrentWeatherType.Value ~= Weathers[9] and DisasterType.Value == "Cyclone" and CloudPower.Value > 800 and CloudPower.Value <= 900 then--C3
+		CurrentWeatherType.Value = Weathers[9]--C3
+
+		ChangeCloud(1800,1600,125)
+
+	elseif CurrentWeatherType.Value ~= Weathers[10] and DisasterType.Value == "Cyclone" and CloudPower.Value > 900 and CloudPower.Value <= 1000 then--C4
+		CurrentWeatherType.Value = Weathers[10]--C4
+
+		ChangeCloud(1900,1900,145)
+
+	elseif CurrentWeatherType.Value ~= Weathers[10] and DisasterType.Value == "Cyclone" and CloudPower.Value > 1000 and CloudPower.Value <= 1100 then--C5
+		CurrentWeatherType.Value = Weathers[11]--C5
+
+		ChangeCloud(2048,2048,165)
+
+	elseif CurrentWeatherType.Value ~= Weathers[11] and DisasterType.Value == "Cyclone" and CloudPower.Value > 1100 then--C6
+		CurrentWeatherType.Value = Weathers[12]--C6
+
+		ChangeCloud(2048,2048,330)
+
+	end
+end
+function UpdateAllClouds(Delta)
+	for Index, Cloud in pairs(script.Parent.Clouds:GetChildren()) do
+		UpdateCloud(Cloud,Delta)
+		CheckCloudState(Cloud)
+	end
+end
+function UpdateCloud(Cloud:Part,Delta)
+	if Cloud.CurrentWeatherType.Value ~= "Dissipating" then
+		local Movement = script.Parent.WorldWind.Value*Delta
+		Cloud.Position = Vector3.new(Cloud.Position.X,CloudHight,Cloud.Position.Z) + Movement
+
+		local raycastParams = RaycastParams.new()
+		raycastParams.FilterDescendantsInstances = {script.Parent.Enviroments}
+		raycastParams.FilterType = Enum.RaycastFilterType.Include
+
+		local RayEndPos	= Vector3.new(0,-6000,0)
+		local RaycastResult = workspace:Raycast(Cloud.Position, RayEndPos, raycastParams)
+
+		local Biome = "Normal"
+		if RaycastResult ~= nil then
+			Biome = RaycastResult.Instance.Name
+		end
+
+		local GrowRate = 5
+		local ShrinkRate = 5
+
+		if Biome == "Hot" then
+			GrowRate = 3
+			ShrinkRate = 4
+			Cloud.DisasterType.Value = "Tornado"
+		elseif Biome == "Cold" then
+			GrowRate = 2
+			ShrinkRate = 6
+			Cloud.DisasterType.Value = "Tornado"
+		elseif Biome == "Humid" then
+			GrowRate = 10
+			ShrinkRate = 3
+			Cloud.DisasterType.Value = "Cyclone"
+		elseif Biome == "Dry" then
+			GrowRate = 1
+			ShrinkRate = 10
+			Cloud.DisasterType.Value = "Tornado"
+		else
+			Cloud.DisasterType.Value = "Tornado"
+			--Change nothing. Defaults to Normal pretty much.
+		end
+
+		if Cloud.Growing.Value == true then
+			Cloud.CloudPower.Value = Cloud.CloudPower.Value + (GrowRate*Delta)*CloudGrowthMulti
+		else
+			Cloud.CloudPower.Value = Cloud.CloudPower.Value - (ShrinkRate*Delta)*CloudGrowthMulti
+		end
+
+		local tornadobottom:Attachment = Cloud:FindFirstChild("TornadoBottom")
+		if tornadobottom then
+			tornadobottom.WorldPosition = Vector3.new(tornadobottom.WorldPosition.X,-10,tornadobottom.WorldPosition.Z)
+		end
+
+		local Tornado:MeshPart = Cloud:FindFirstChild("Tornado")
+
+		if Cloud.DisasterType.Value == "Tornado" and Cloud.CloudPower.Value > 600 then
+			
+			local TornadoSize = Cloud.TornadoStuff.Tornado.Width1
+			
+			if Tornado ~= nil then
+				Tornado.Size = Vector3.new(TornadoSize,CloudHight*1.1,TornadoSize)
+				Tornado.Position = Vector3.new(Cloud.Position.X,CloudHight*0.4,Cloud.Position.Z)
+				Tornado.Orientation = Tornado.Orientation + Vector3.new(0,Cloud.TornadoSpeed.Value*Delta,0)
+				
+				Tornado.a1.Position = Vector3.new(0,-CloudHight*0.4,TornadoSize)
+				Tornado.a2.Position = Vector3.new(TornadoSize,-CloudHight*0.4,0)
+				Tornado.a3.Position = Vector3.new(0,-CloudHight*0.4,-TornadoSize)
+				Tornado.a4.Position = Vector3.new(-TornadoSize,-CloudHight*0.4,0)
+				
+				Tornado.a1.Beam.CurveSize0 = TornadoSize
+				Tornado.a2.Beam.CurveSize1 = -TornadoSize
+				Tornado.a3.Beam.CurveSize0 = -TornadoSize
+				Tornado.a4.Beam.CurveSize1 = TornadoSize
+				
+				Tornado.a1.Beam.Width0 = TornadoSize
+				Tornado.a1.Beam.Width1 = TornadoSize
+				Tornado.a2.Beam.Width0 = TornadoSize
+				Tornado.a2.Beam.Width1 = TornadoSize
+				Tornado.a3.Beam.Width0 = TornadoSize
+				Tornado.a3.Beam.Width1 = TornadoSize
+				Tornado.a4.Beam.Width0 = TornadoSize
+				Tornado.a4.Beam.Width1 = TornadoSize
+				
+				local segments = TornadoSize * 0.1
+				if segments < 10 then
+					segments = 10
+				end
+				Tornado.a1.Beam.Segments = segments
+				Tornado.a2.Beam.Segments = segments
+				Tornado.a3.Beam.Segments = segments
+				Tornado.a4.Beam.Segments = segments
+				
+				Tornado.a1.Beam.Enabled = true
+				Tornado.a2.Beam.Enabled = true
+				Tornado.a3.Beam.Enabled = true
+				Tornado.a4.Beam.Enabled = true
+				
+			else
+				Tornado = script.Tornado:Clone()
+				Tornado.Parent = Cloud
+				Tornado.Size = Vector3.new(TornadoSize,CloudHight*1.1,TornadoSize)
+				Tornado.Position = Vector3.new(Cloud.Position.X,CloudHight*0.4,Cloud.Position.Z)
+				Tornado.Orientation = Tornado.Orientation + Vector3.new(0,Cloud.TornadoSpeed.Value*Delta,0)
+				Tornado.Transparency = 0.1
+				
+				Tornado.a1.Beam.Enabled = true
+				Tornado.a2.Beam.Enabled = true
+				Tornado.a3.Beam.Enabled = true
+				Tornado.a4.Beam.Enabled = true
+			end
+
+		elseif Cloud.DisasterType.Value ~= "Tornado" or Cloud.CloudPower.Value < 600 then
+			
+			if Tornado ~= nil then
+				Tornado.Parent = script.Parent
+				game.Debris:AddItem(Tornado,10)
+
+				local goal = {}
+				goal.Transparency = 1
+				goal.Position = Vector3.new(Cloud.Position.X,CloudHight,Cloud.Position.Z)
+				local tweenInfo = TweenInfo.new(10,Enum.EasingStyle.Exponential,Enum.EasingDirection.In)
+
+				local tween = tweenService:Create(Tornado,tweenInfo,goal)
+				tween:Play()
+				
+				Tornado.a1.Beam.Enabled = false
+				Tornado.a2.Beam.Enabled = false
+				Tornado.a3.Beam.Enabled = false
+				Tornado.a4.Beam.Enabled = false
+			end
+
+		end
+		
+		local Cyclone:MeshPart = Cloud:FindFirstChild("Cyclone")
+		
+		if Cloud.DisasterType.Value == "Cyclone" and Cloud.CloudPower.Value > 600 then
+
+			if Cyclone ~= nil then
+				Cyclone.Size = Vector3.new(Cloud.Size.X,Cloud.Size.Y*0.1,Cloud.Size.Z)
+				Cyclone.Position = Vector3.new(Cloud.Position.X,Cloud.Position.Y*0.4,Cloud.Position.Z)
+				Cyclone.Orientation = Cyclone.Orientation + Vector3.new(0,Cloud.WindSpeed.Value*Delta,0)
+
+				Cyclone.a1.Beam.Enabled = false
+				Cyclone.a2.Beam.Enabled = false
+				Cyclone.a3.Beam.Enabled = false
+				Cyclone.a4.Beam.Enabled = false
+
+			else
+				Cyclone = script.Tornado:Clone()
+				Cyclone.Name = "Cyclone"
+				Cyclone.Parent = Cloud
+				Cyclone.Size = Vector3.new(Cloud.Size.X,Cloud.Size.Y*0.1,Cloud.Size.Z)
+				Cyclone.Position = Vector3.new(Cloud.Position.X,Cloud.Position.Y*0.4,Cloud.Position.Z)
+				Cyclone.Orientation = Cyclone.Orientation + Vector3.new(0,Cloud.WindSpeed.Value*Delta,0)
+				Cyclone.Transparency = 0.1
+
+				Cyclone.a1.Beam.Enabled = false
+				Cyclone.a2.Beam.Enabled = false
+				Cyclone.a3.Beam.Enabled = false
+				Cyclone.a4.Beam.Enabled = false
+			end
+
+		elseif Cloud.DisasterType.Value ~= "Cyclone" or Cloud.CloudPower.Value < 600 then
+
+			if Cyclone ~= nil then
+				Cyclone.Parent = script.Parent
+				game.Debris:AddItem(Cyclone,10)
+
+				local goal = {}
+				goal.Transparency = 1
+				goal.Size = Vector3.new(0,0,0)
+				local tweenInfo = TweenInfo.new(10,Enum.EasingStyle.Exponential,Enum.EasingDirection.In)
+
+				local tween = tweenService:Create(Cyclone,tweenInfo,goal)
+				tween:Play()
+
+				Cyclone.a1.Beam.Enabled = false
+				Cyclone.a2.Beam.Enabled = false
+				Cyclone.a3.Beam.Enabled = false
+				Cyclone.a4.Beam.Enabled = false
+			end
+
+		end
+
+		if Cloud.NextLightningBolt.Value <= 0 then
+			local minus = math.random(AverageLightningFrequency*0.5,AverageLightningFrequency*2) * Cloud.CloudPower.Value/2000
+			Cloud.NextLightningBolt.Value = math.random(AverageLightningFrequency*0.5,AverageLightningFrequency*2) - minus
+
+			local RadX = math.random(-Cloud.Size.X*0.5,Cloud.Size.X*0.5)
+			local RadZ = math.random(-Cloud.Size.Z*0.5,Cloud.Size.Z*0.5)
+			local LightningPos = Cloud.Position + Vector3.new(RadX,0,RadZ)
+			Lightning(LightningPos)
+		elseif Cloud.NextLightningBolt.Value > 0 and Cloud.WindSpeed.Value >= 15 then
+			Cloud.NextLightningBolt.Value = Cloud.NextLightningBolt.Value - Delta
+		end
+
+		for _, Part in pairs(workspace:GetPartBoundsInBox(Cloud.CFrame,Cloud.Size)) do
+			if Part.Parent == script.Parent.Clouds and Part ~= Cloud and Part.CloudPower.Value > 10 and Part.CloudPower.Value < Cloud.CloudPower.Value then
+
+				local steal = Part.CloudPower.Value
+				Part.CloudPower.Value = 0
+				Part.Growing.Value = false
+				Cloud.CloudPower.Value = Cloud.CloudPower.Value + steal
+
+			end
+		end
+
+	end
+end
+--Functions--
+
+--Set Up--
+for Index, Object in pairs(script.StarterGui:GetChildren()) do
+	if Object:IsA("LocalScript") then
+		Object.Parent = game.StarterGui
+		Object.Disabled = false
+	end
+end
+for Index, Object in pairs(script.ReplicatedStorage:GetChildren()) do
+	if Object then
+		Object.Parent = game.ReplicatedStorage
+	end
+end
+for Index, Object in pairs(script.Parent.Enviroments:GetChildren()) do
+	if Object and Object:IsA("BasePart") then
+		Object.Anchored = true
+		Object.CanCollide = false
+		Object.CanTouch = false
+		Object.CanQuery = true
+		Object.Transparency = 1
+	end
+end
+--Set Up--
+
+while true do
+	local DT = runService.Heartbeat:Wait()
+	WindChangeDelta = WindChangeDelta - DT
+	CloudSpawnDelta = CloudSpawnDelta - DT
+
+	if WindChangeDelta <= 0 then
+		WindChangeDelta = WindChangeFrequency
+
+		local ChangeX = math.random(-100,100)*0.01
+		local ChangeZ = math.random(-100,100)*0.01
+		local Direction = Vector3.new(ChangeX,0,ChangeZ).Unit
+		local Multi = math.random(0,MaxGlobalWind)
+
+		local goal = {}
+		goal.Value = Direction*Multi
+		local tweenInfo = TweenInfo.new(WindChangeCompleteTime)
+
+		local tween = tweenService:Create(script.Parent.WorldWind,tweenInfo,goal)
+		tween:Play()
+	end
+	if CloudSpawnDelta <= 0 then
+		CloudSpawnDelta = math.random(CloudSpawnFrequency*0.5,CloudSpawnFrequency*2)
+		SpawnNewCloud()
+	end
+
+	UpdateAllClouds(DT)
+	UpdateAllCharWind(DT)
+end
